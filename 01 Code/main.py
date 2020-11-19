@@ -19,15 +19,17 @@ train_labels = pd.read_csv(rf"{RAW_PATH}/training_labels.csv")
 test_features = pd.read_csv(rf"{RAW_PATH}/test_features.csv")
 
 # Putting data together
-total_train = pd.concat([train_features, train_labels], axis=1)
-total_train.drop(columns=["respondent_id"], inplace=True)
+total_train = pd.merge(train_features, train_labels, on="respondent_id")
 total_train.loc[:, "type"] = "train"
-
 test_features.loc[:, "type"] = "test"
 total_data = pd.concat([total_train, test_features], axis=0)
 
-# %% Matplotlib Settings
+# %% Settings
 
+# Quick Access
+target_columns = ["h1n1_vaccine", "seasonal_vaccine"]
+
+# Matplotlib sizes
 SMALL_SIZE = 15
 MEDIUM_SIZE = 20
 BIGGER_SIZE = 30
@@ -49,15 +51,46 @@ approach for the imputation if the amount of missing observation is seriously hi
 
 missing_pct = total_data.groupby(by="type").agg(lambda x: x.isnull().sum() / len(x) * 100)
 missing_pct_index = missing_pct.reset_index()
-
-
-
-
+long_missing_data = pd.melt(missing_pct_index, id_vars=["type"], value_vars=train_features.columns)
+sorted_long_missing_data = long_missing_data.sort_values(by="value", ascending=False)
+fig, axs = plt.subplots(figsize=(20, 10))
+plot = sns.barplot(data=sorted_long_missing_data, x="variable", y="value", hue="type", ax=axs)
+axs.set_ylabel("Percentage Missing")
+plt.xticks(rotation=90)
+path = rf"{OUTPUT_PATH}/missing_observation_threshold.png"
+fig.savefig(path, bbox_inches='tight')
 
 """
-We now divide the variables into two categories, namely into 'easy' and 'difficult' to impute. That classification
-decides which imputation method we can use.
+We see that we have some variables which have around 50% missing data. For that reason we already could think
+of dropping those columns. Before doing that we will try to gauge their importance by looking whether we find
+any correlation between these columns and any of the target.
 """
+
+CRITICAL_THRESHOLD = 40
+bool_above_threshold = missing_pct.loc["train", :] > CRITICAL_THRESHOLD
+critical_columns = list(bool_above_threshold.index[bool_above_threshold])
+
+
+def correlation_check(column, target, data):
+
+    joined_df = data.loc[:, [column, target]]
+    non_nan_joined_df = joined_df.dropna()
+    dummy_data = pd.get_dummies(non_nan_joined_df)
+    corr_df = dummy_data.corr()
+    return corr_df.loc[:, target]
+
+
+fig, axs = plt.subplots(ncols=len(critical_columns),
+                        figsize=(5*10, 10), sharey=True)
+axs = axs.ravel()
+i = 0
+for column in critical_columns:
+    column_df = pd.DataFrame()
+    for target in target_columns:
+        column_df.loc[:, target] = correlation_check(column, target, total_data)
+    sns.heatmap(column_df.transpose())
+    plt.yticks(rotation=0)
+    i += 1
 
 # %% Exploration of Dependent Variable
 
