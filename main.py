@@ -72,7 +72,7 @@ occurs
 
 The biggest insight of the graphing is that all variables are of categorical nature, which mean that we will
 have to think about valid encoding methods. Secondly we find several columns with a significant amount of missing
-observations. Next up we will look how bad the problem actually is."""
+observations."""
 
 CATEGORICAL_THRESHOLD = 5/100 * len(total_train)
 feature_columns = list(set(total_train.columns) - set(target_columns))
@@ -86,6 +86,76 @@ for column in tqdm(feature_columns):
         self_plot.categorical_plot(object_series)
     else:
         self_plot.numerical_plot(no_nan_series)
+
+# %% Feature Engineering - Beginning
+
+"""In order to see what the important variables are we take a first look at the most and least correlated variables
+with the target. From there we already have some sort of an idea in which direction to look"""
+
+NUM_ROWS_SHOWN = 10
+num_target_columns = len(target_columns)
+for bool_order, title in zip([True, False], ['Lowest Correlations', 'Highest Correlations']):
+    fig, axs = plt.subplots(figsize=([ num_target_columns * 10, 10]), ncols=num_target_columns)
+    axs = axs.ravel()
+    for i, y_column in enumerate(target_columns):
+        target_corr_sorted = pd.get_dummies(total_train).corr().sort_values(y_column, ascending=bool_order)
+        target_corrs_top_ten = target_corr_sorted.loc[:, [y_column]][:NUM_ROWS_SHOWN].T
+        sns.heatmap(target_corrs_top_ten, yticklabels=False, ax=axs[i])
+        axs[i].set_title(y_column)
+    axs[0].set_ylabel(title)
+    path = rf'{OUTPUT_PATH}\{title}.png'
+    fig.savefig(path, bbox_inches='tight')
+    plt.close()
+
+# %% Feature Engineering - Subjective Answers
+
+"""The dataset contains several variables which has subjective answering - for example how would you rate the risk
+of getting the seasonal flu. Given that the differentation between 'Very Low' and 'Somewhat Low' is not comparable
+between participants, we reduce the possible answers from five to three. This potentially reduces confusion.
+It is not possible to treat them as a numeric variable either given that the answer choice 'Don't Know' does not lay
+in the middle between low and high"""
+
+new_opinion_cat = {1: 'Low', 2: 'Low', 3: 'No Idea', 4: 'High', 5: 'High'}
+opinion_variables = [x for x in total_train.columns if x.startswith('opinion')]
+for var in opinion_variables:
+    total_train.loc[:, var] = total_train.loc[:, var].map(new_opinion_cat)
+
+# %% Feature Engineering - What do your co-workers do
+
+
+# %% Feature Engineering - Creation of scoring variables
+
+"""In order for the model to better pick up information from multiple columns, we can give the model the information
+in a better to understand format. For that we create a score for being careful, and for being in the risk group.
+This score is nothing other than a sum of binary variables which indicate carefulness/ or being part of a risk
+group."""
+
+# Careful People
+careful_behavior = [
+    'behavioral_antiviral_meds',
+    'behavioral_avoidance',
+    'behavioral_face_mask',
+    'behavioral_wash_hands',
+    'behavioral_large_gatherings',
+    'behavioral_outside_home',
+    'behavioral_touch_face',
+]
+
+df_careful_corr = total_train.loc[:, careful_behavior].corr()
+fig, axs = plt.subplots(figsize=(10, 10))
+sns.heatmap(df_careful_corr, ax=axs)
+path = rf'{OUTPUT_PATH}\careful_correlation_matrix.png'
+fig.savefig(path, bbox_inches='tight')
+
+total_train.loc[:, 'careful_score'] = total_train.loc[:, careful_behavior].sum(axis=1)
+
+# Risk Group
+risk_group_columns = [
+    'chronic_med_condition',
+    'health_worker',
+]
+old_series = total_train.loc[:, 'age_group'] == '65+ Years'
+total_train.loc[:, 'risk_score'] = total_train.loc[:, risk_group_columns].sum(axis=1) + old_series
 
 # %% Missing Observations
 
@@ -137,14 +207,19 @@ preprocessing_pipeline = ColumnTransformer(
 
 # %% Imputation
 
-""""""
+"""For the imputation we try out several imputation methods. We start by using simpler methods, such as
+mean and median imputation, before then moving on to model based imputation. Here we use BayesRidge and
+LinearRegression. The error metric chosen is roc_auc, given that this also represents the error metrics used
+by the overall challenge.
+
+From the results we can see that the best method seems to be """
 
 # Preliminaries
 target_clf = GradientBoostingClassifier()
 N_SPLITS = 5
+simple_methods = ['mean', 'median', 'most_frequent']
 impute_classifiers = [
     BayesianRidge(),
-    Lasso(),
     LinearRegression(),
 ]
 
@@ -156,10 +231,14 @@ for y_column in tqdm(target_columns):
     X_raw = total_train.loc[:, feature_columns]
     X_missing = preprocessing_pipeline.fit_transform(X_raw, y_series)
 
-    df_simply_imputed = self_func.simple_imputing(X_missing, y_series, target_clf, N_SPLITS)
+    df_simply_imputed = self_func.simple_imputing(X_missing, y_series, target_clf, simple_methods, N_SPLITS)
     df_iteratively_imputed = self_func.iterative_imputing(X_missing, y_series, target_clf, impute_classifiers, N_SPLITS)
+    df_imputed = pd.concat([df_imputed, df_iteratively_imputed, df_simply_imputed], axis=0)
 
-
+fig, axs = plt.subplots(figsize=(10, 10))
+sns.boxplot(data=df_imputed, x='score', y='method' ,hue='target')
+path = f'{OUTPUT_PATH}/imputation.png'
+fig.savefig(path, bbox_inches='tight')
 
 
 

@@ -27,9 +27,9 @@ def fewer_than_cutoff(column_name, data, n):
 # %% Imputing Techniques
 
 
-def simple_imputing(X_data, y_data, classifier, num_splits):
-
-    simple_methods = ['mean', 'median']
+def simple_imputing(X_data, y_data, classifier, simple_methods, num_splits):
+    """This function imputes the missing values by using simple methods such as mean and median.
+    Then it reports the score"""
     df_simple_imputer = pd.DataFrame(index=list(range(len(simple_methods) * num_splits)),
                                      columns=['score', 'method', 'target'])
 
@@ -48,7 +48,7 @@ def simple_imputing(X_data, y_data, classifier, num_splits):
 
 
 def iterative_imputing(X_data, y_data, classifier, impute_classifiers, num_splits):
-
+    """This function imputes the missing values with model-based methods."""
     df_iterative_imputer = pd.DataFrame(index=list(range(len(impute_classifiers) * num_splits)),
                                         columns=['score', 'method', 'target'])
 
@@ -61,6 +61,6 @@ def iterative_imputing(X_data, y_data, classifier, impute_classifiers, num_split
         df_iterative_imputer.loc[row_begin:row_end, 'score'] = cross_val_score(
             estimator, X_data, y_data, scoring='roc_auc', cv=num_splits
         )
-        df_iterative_imputer.loc[row_begin:row_end, 'method'] = classifier.__class__.__name__
+        df_iterative_imputer.loc[row_begin:row_end, 'method'] = impute_classifier.__class__.__name__
         df_iterative_imputer.loc[row_begin:row_end, 'target'] = y_data.name
     return df_iterative_imputer
