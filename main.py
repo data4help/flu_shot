@@ -92,7 +92,7 @@ for column in tqdm(feature_columns):
 """In order to see what the important variables are we take a first look at the most and least correlated variables
 with the target. From there we already have some sort of an idea in which direction to look"""
 
-NUM_ROWS_SHOWN = 10
+NUM_ROWS_SHOWN = 15
 num_target_columns = len(target_columns)
 for bool_order, title in zip([True, False], ['Lowest Correlations', 'Highest Correlations']):
     fig, axs = plt.subplots(figsize=([ num_target_columns * 10, 10]), ncols=num_target_columns)
@@ -120,7 +120,28 @@ opinion_variables = [x for x in total_train.columns if x.startswith('opinion')]
 for var in opinion_variables:
     total_train.loc[:, var] = total_train.loc[:, var].map(new_opinion_cat)
 
-# %% Feature Engineering - What do your co-workers do
+# %% Feature Engineering - What kind of city do you live in
+
+""""""
+
+grouping_variables = [
+    'employment_industry',
+    'employment_occupation',
+    'hhs_geo_region'
+]
+
+secondary_variables = [
+    'doctor_recc_h1n1',
+    'opinion_seas_risk',
+    'income_poverty',
+    'doctor_recc_seasonal',
+    'race',
+    'health_insurance'
+]
+
+for grouping in grouping_variables:
+    for secondary in secondary_variables:
+        self_plot.grouping_insights(grouping, secondary, total_train)
 
 
 # %% Feature Engineering - Creation of scoring variables
@@ -219,7 +240,6 @@ target_clf = GradientBoostingClassifier()
 N_SPLITS = 5
 simple_methods = ['mean', 'median', 'most_frequent']
 impute_classifiers = [
-    BayesianRidge(),
     LinearRegression(),
 ]
 
@@ -237,7 +257,7 @@ for y_column in tqdm(target_columns):
 
 fig, axs = plt.subplots(figsize=(10, 10))
 sns.boxplot(data=df_imputed, x='score', y='method' ,hue='target')
-path = f'{OUTPUT_PATH}/imputation.png'
+path = rf'{OUTPUT_PATH}/imputation.png'
 fig.savefig(path, bbox_inches='tight')
 
 
