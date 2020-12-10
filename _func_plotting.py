@@ -9,8 +9,7 @@ import pandas as pd
 
 # Paths
 MAIN_PATH = r'C:/Users/DEPMORA1/Documents/Projects/flu_shot'
-DATA_PATH = rf'{MAIN_PATH}/data'
-OUTPUT_PATH = rf'{MAIN_PATH}/output'
+GRAPH_PATH = rf'{MAIN_PATH}/output/graphs'
 
 # %%
 
@@ -39,7 +38,7 @@ def categorical_plot(series):
     fig, axs = plt.subplots(figsize=(10, 10))
     axs.pie(x=value_count_series, labels=labels, pctdistance=0.5)
     axs.set_title(series.name)
-    path = rf'{OUTPUT_PATH}/distribution/{series.name}'
+    path = rf'{GRAPH_PATH}/distribution/{series.name}'
     fig.savefig(path, bbox_inches='tight')
     plt.close()
 
@@ -49,7 +48,7 @@ def numerical_plot(series):
     fig, axs = plt.subplots(figsize=(10, 10))
     sns.histplot(series, ax=axs)
     axs.set_title(series.name)
-    path = rf'{OUTPUT_PATH}/distribution/{series.name}'
+    path = rf'{GRAPH_PATH}/distribution/{series.name}'
     fig.savefig(path, bbox_inches='tight')
     plt.close()
 
@@ -70,6 +69,6 @@ def grouping_insights(grouping_variable, secondary_variable, data):
     # Plotting and saving figure
     fig, axs = plt.subplots(figsize=([len(columns) * 10, 10]))
     df_relative_count_reshaped.plot.barh(stacked=True, ax=axs)
-    path = rf'{OUTPUT_PATH}\grouping\{grouping_variable}_{secondary_variable}.png'
+    path = rf'{GRAPH_PATH}\grouping\{grouping_variable}_{secondary_variable}.png'
     fig.savefig(path, bbox_inches='tight')
 
