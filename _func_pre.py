@@ -10,8 +10,7 @@ import matplotlib.pyplot as plt
 import warnings
 
 # Forecasting
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import SimpleImputer, IterativeImputer
+from sklearn.impute import KNNImputer
 from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import make_pipeline, Pipeline
 
@@ -39,43 +38,45 @@ def create_ranking(grouping_variable, secondary_variable, data):
 # %% Imputing Techniques
 
 
-def simple_imputing(X_data, y_data, classifier, simple_methods, num_splits):
+def knn_imputing(X_data, y_data, classifier, n_neighbors, num_splits):
     """This function imputes the missing values by using simple methods such as mean and median.
     Then it reports the score"""
-    df_simple_imputer = pd.DataFrame(index=list(range(len(simple_methods) * num_splits)),
-                                     columns=['score', 'method', 'target'])
+    df_impute_score = pd.DataFrame(index=list(range(num_splits * len(n_neighbors))),
+                                   columns=['score', 'neighbors', 'target'])
 
-    for i, strategy in enumerate(simple_methods):
+    # Testing out all different neigbors
+    for i, n_neighbor in enumerate(n_neighbors):
+        imputer = KNNImputer(n_neighbors=n_neighbor)
         estimator = make_pipeline(
-            SimpleImputer(missing_values=np.nan, strategy=strategy),
+            imputer,
             classifier
         )
-        row_begin, row_end = (i*num_splits), ((i+1)*num_splits)-1
-        df_simple_imputer.loc[row_begin:row_end, 'score'] = cross_val_score(
+        range_begin, range_end = (i * num_splits), ((i+1) * num_splits - 1)
+        df_impute_score.loc[range_begin:range_end, 'score'] = cross_val_score(
             estimator, X_data, y_data, scoring='roc_auc', cv=num_splits
         )
-        df_simple_imputer.loc[row_begin:row_end, 'method'] = strategy
-        df_simple_imputer.loc[row_begin:row_end, 'target'] = y_data.name
-    return df_simple_imputer
+        df_impute_score.loc[range_begin:range_end, 'neighbors'] = n_neighbor
+        df_impute_score.loc[range_begin:range_end, 'target'] = y_data.name
+
+    return df_impute_score
 
 
-def iterative_imputing(X_data, y_data, classifier, impute_classifiers, num_splits):
-    """This function imputes the missing values with model-based methods."""
-    df_iterative_imputer = pd.DataFrame(index=list(range(len(impute_classifiers) * num_splits)),
-                                        columns=['score', 'method', 'target'])
+def imputing_data(X_data, y_data, neighbors_results, transforming_pipeline):
+    """This function extracts the best number of neighbors and then imputes the missing values through the KNN
+    imputer algorithm"""
+    # Find best number of neighbors
+    neighbors_results = neighbors_results.astype({'score': float})
+    best_num_neighbors = neighbors_results.groupby(['neighbors'])['score'].mean().idxmax()
 
-    for i, impute_classifier in enumerate(impute_classifiers):
-        estimator = make_pipeline(
-            IterativeImputer(max_iter=100, random_state=0, estimator=impute_classifier, imputation_order='ascending'),
-            classifier
-        )
-        row_begin, row_end = (i*num_splits), ((i+1)*num_splits)-1
-        df_iterative_imputer.loc[row_begin:row_end, 'score'] = cross_val_score(
-            estimator, X_data, y_data, scoring='roc_auc', cv=num_splits
-        )
-        df_iterative_imputer.loc[row_begin:row_end, 'method'] = impute_classifier.__class__.__name__
-        df_iterative_imputer.loc[row_begin:row_end, 'target'] = y_data.name
-    return df_iterative_imputer
+    # Getting the column names straight
+    preprocessing_pipeline = make_pipeline(
+        transforming_pipeline,
+        KNNImputer(n_neighbors=best_num_neighbors)
+    )
+    processed_data = preprocessing_pipeline.fit_transform(X_data, y_data)
+    column_names = get_feature_names(transforming_pipeline)
+    df_processed_data = pd.DataFrame(processed_data, columns=column_names)
+    return df_processed_data
 
 
 # %% Extracting columns names from imputation method

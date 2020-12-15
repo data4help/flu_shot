@@ -3,6 +3,8 @@
 
 ### Packages
 # Basic
+import os
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import pickle
@@ -21,12 +23,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import make_pipeline
 
 # Forecasting
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.model_selection import cross_val_score
-from sklearn.linear_model import BayesianRidge
-from sklearn.neighbors import KNeighborsRegressor
-from sklearn.linear_model import Lasso, LinearRegression
-from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
 
 # Self written
 import _func_plotting as self_plot
@@ -175,13 +172,13 @@ sorting_variables = [
     'careful_score',
     'income_poverty',
 ]
-
+"""
 for grouping in tqdm(groupby_variables):
     for secondary in sorting_variables:
         new_var_name = f'{grouping}_{secondary}_ranking'
         total_train.loc[:, new_var_name] = self_func.create_ranking(grouping, secondary, total_train)
         self_plot.grouping_insights(grouping, secondary, total_train)
-
+"""
 # %% Missing Observations
 
 """ To get a better impression how many observations are actually missing, we plot bar-charts for every column.
@@ -230,72 +227,93 @@ transforming_pipeline = ColumnTransformer(
 
 # %% Imputation
 
-"""For the imputation we try out several imputation methods. We start by using simpler methods, such as
-mean and median imputation, before then moving on to model based imputation. Here we use BayesRidge and
-LinearRegression. The error metric chosen is roc_auc, given that this also represents the error metrics used
-by the overall challenge.
+"""For the imputation we will use KNN Imputer from Sklearn. In order to decide how many neigbours we try out different
+ones and run a GridSearch to predict the two target variables
 
 From the results we can see that the best method seems to be """
 
-# Preliminaries
-target_clf = GradientBoostingClassifier()
-N_SPLITS = 5
-simple_methods = ['mean', 'median', 'most_frequent']
-impute_classifiers = [
-    LinearRegression(),
-]
+path_preprocessed_data_file = rf'{DATA_PATH}/preprocessed_data.pickle'
+if not os.path.isfile(path_preprocessed_data_file):
+    # Conducting imputations
+    N_SPLITS = 5
+    n_neighbors = [10, 25, 50, 75, 100, 150, 200]
+    example_clf = LogisticRegression(max_iter=1_000)
+    df_imputed = pd.DataFrame()
+    dict_processed_data = {}
+    for y_column in tqdm(target_columns):
+        y_series = total_train.loc[:, y_column]
+        X_raw = total_train.loc[:, feature_columns]
+        X_missing = transforming_pipeline.fit_transform(X_raw, y_series)
 
-# Conducting imputations
-df_imputed = pd.DataFrame()
-for y_column in tqdm(target_columns):
-    y_series = total_train.loc[:, y_column]
+        df_temp_results = self_func.knn_imputing(X_missing, y_series, example_clf, n_neighbors, N_SPLITS)
+        dict_processed_data[y_column] = self_func.imputing_data(X_raw, y_series, df_temp_results, transforming_pipeline)
+        df_imputed = pd.concat([df_imputed, df_temp_results], axis=0)
 
-    X_raw = total_train.loc[:, feature_columns]
-    X_missing = transforming_pipeline.fit_transform(X_raw, y_series)
+    # Plot imputation performance
+    df_imputed = df_imputed.astype({'score': float})
+    grouped_imputed = df_imputed.groupby(['neighbors', 'target']).mean()
+    reshaped_table = pd.pivot_table(grouped_imputed, values='score', index='neighbors',columns='target')
+    fig, axs = plt.subplots(figsize=(10, 10))
+    sns.heatmap(data=reshaped_table, annot=True, fmt='.4g')
+    path = rf'{GRAPH_PATH}/imputation.png'
+    fig.savefig(path, bbox_inches='tight')
 
-    df_simply_imputed = self_func.simple_imputing(X_missing, y_series, target_clf, simple_methods, N_SPLITS)
-    df_iteratively_imputed = self_func.iterative_imputing(X_missing, y_series, target_clf, impute_classifiers, N_SPLITS)
-    df_imputed = pd.concat([df_imputed, df_iteratively_imputed, df_simply_imputed], axis=0)
+    # Save preprocessed data
+    with open(path_preprocessed_data_file, 'wb') as f:
+        pickle.dump(dict_processed_data, f)
+else:
+    dict_processed_data = pickle.load(open(path_preprocessed_data_file, 'rb'))
+
+# %% Initial Modelling
+
+"""After getting the data ready, it is now time to try out all kind of different models, we start by throwing
+all kind of models at the data with their standard parameter. We then take the model which performed the best
+initially to test out some hyper-parameter. Given the scoring of the data science problem"""
+
+from sklearn import model_selection
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+
+# prepare models
+models = []
+models.append(('LR', LogisticRegression(max_iter=1_000)))
+models.append(('MLP', MLPClassifier(max_iter=1_000)))
+models.append(('LDA', LinearDiscriminantAnalysis()))
+models.append(('KNN', KNeighborsClassifier()))
+models.append(('CART', DecisionTreeClassifier()))
+models.append(('NB', GaussianNB()))
+models.append(('SVM', SVC()))
+models.append(('GBM', GradientBoostingClassifier()))
+models.append(('RFT', RandomForestClassifier()))
+
+results = pd.DataFrame(index=[x[0] for x in models], columns=target_columns)
+scoring='roc_auc'
+for y_column in target_columns:
+    y_data = total_train.loc[:, y_column]
+    X_data = dict_processed_data[y_column]
+    for name, model in tqdm(models):
+        kfold = model_selection.KFold(n_splits=10, random_state=28, shuffle=True)
+        cv_results = model_selection.cross_val_score(model, X_data, y_data, cv=kfold, scoring=scoring)
+        results.loc[name, y_column] = np.mean(cv_results)
 
 # Plot imputation performance
+results.columns.name = 'Target'
+results.index.name = 'CV Score'
+
 fig, axs = plt.subplots(figsize=(10, 10))
-sns.boxplot(data=df_imputed, x='score', y='method' ,hue='target')
-path = rf'{GRAPH_PATH}/imputation.png'
+sns.heatmap(data=results.astype(float), annot=True, ax=axs, fmt='.4g')
+path = rf'{GRAPH_PATH}/model_performance.png'
 fig.savefig(path, bbox_inches='tight')
 
-# %% Apply preprocessing pipeline and save the data
-# TODO: Applying best method individually - for each target their own imputation method
+# %% Hpyer-Parameter Tuning for Final Models
 
-# Final transformation pipeline
-preprocessing_pipeline = make_pipeline(
-    transforming_pipeline,
-    SimpleImputer(strategy='most_frequent')
-)
-
-# Preprocessing data and put it back into dataframe
-dict_processed_data = {}
-for y_column in target_columns:
-    y_series = total_train.loc[:, y_column]
-    X_raw = total_train.loc[:, feature_columns]
-
-    processed_data = preprocessing_pipeline.fit_transform(X_raw, y_series)
-    column_names = self_func.get_feature_names(transforming_pipeline)
-    dict_processed_data[y_column] = pd.DataFrame(processed_data, columns=column_names)
-
-# Saving dictionary
-file_name = rf'{DATA_PATH}/preprocessed_data.pickle'
-with open(file_name, 'wb') as f:
-    pickle.dump(dict_processed_data, f)
-
-
-
-
-
-
-
-
-
-
+"""Now it is time to train hyper-parameterized models for """
 
 
 
