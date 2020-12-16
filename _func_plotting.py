@@ -11,9 +11,6 @@ import pandas as pd
 MAIN_PATH = r'C:/Users/DEPMORA1/Documents/Projects/flu_shot'
 GRAPH_PATH = rf'{MAIN_PATH}/output/graphs'
 
-# %%
-
-
 # %% Matplotlib Settings
 
 SMALL_SIZE = 20
@@ -69,6 +66,6 @@ def grouping_insights(grouping_variable, secondary_variable, data):
     # Plotting and saving figure
     fig, axs = plt.subplots(figsize=([len(columns) * 10, 10]))
     df_relative_count_reshaped.plot.barh(stacked=True, ax=axs)
-    path = rf'{GRAPH_PATH}\grouping\{grouping_variable}_{secondary_variable}.png'
+    path = rf'{GRAPH_PATH}/grouping/{grouping_variable}_{secondary_variable}.png'
     fig.savefig(path, bbox_inches='tight')
 
