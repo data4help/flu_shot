@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import pickle
+import math
 
 # Plotting
 import matplotlib
@@ -24,6 +25,17 @@ from sklearn.pipeline import make_pipeline
 
 # Forecasting
 from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+from sklearn.model_selection import GridSearchCV, KFold, cross_val_score
+
+# Upsampling
+import imblearn
 
 # Self written
 import _func_plotting as self_plot
@@ -55,7 +67,8 @@ count-plot. Here we see that the h1n1 vaccine variable is relatively balanced, w
 is nicely balanced. We therefore will consider playing a bit with sampling methods for the h1n1 vaccine variable """
 
 target_columns = ['h1n1_vaccine', 'seasonal_vaccine']
-fig, axs = plt.subplots(ncols=2, figsize=(len(target_columns) * 10, 10))
+num_target_columns = len(target_columns)
+fig, axs = plt.subplots(ncols=2, figsize=(num_target_columns * 10, 10))
 axs = axs.ravel()
 for i, column in enumerate(target_columns):
     sns.countplot(total_train.loc[:, column], ax=axs[i])
@@ -92,7 +105,6 @@ for column in tqdm(feature_columns):
 with the target. From there we already have some sort of an idea in which direction to look"""
 
 NUM_ROWS_SHOWN = 15
-num_target_columns = len(target_columns)
 for bool_order, title in zip([True, False], ['Lowest Correlations', 'Highest Correlations']):
     fig, axs = plt.subplots(figsize=([ num_target_columns * 10, 10]), ncols=num_target_columns)
     axs = axs.ravel()
@@ -254,7 +266,7 @@ if not os.path.isfile(path_preprocessed_data_file):
     grouped_imputed = df_imputed.groupby(['neighbors', 'target']).mean()
     reshaped_table = pd.pivot_table(grouped_imputed, values='score', index='neighbors',columns='target')
     fig, axs = plt.subplots(figsize=(10, 10))
-    sns.heatmap(data=reshaped_table, annot=True, fmt='.4g')
+    sns.heatmap(data=reshaped_table, annot=True, fmt='.5g')
     path = rf'{GRAPH_PATH}/imputation.png'
     fig.savefig(path, bbox_inches='tight')
 
@@ -268,17 +280,10 @@ else:
 
 """After getting the data ready, it is now time to try out all kind of different models, we start by throwing
 all kind of models at the data with their standard parameter. We then take the model which performed the best
-initially to test out some hyper-parameter. Given the scoring of the data science problem"""
+initially to test out some hyper-parameter.
 
-from sklearn import model_selection
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.naive_bayes import GaussianNB
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
+From the information we get from the final plot we see that the Gradient Boosting Classifier is the strongest classifier
+and therefore also the one we will continue with"""
 
 # prepare models
 models = []
@@ -298,8 +303,8 @@ for y_column in target_columns:
     y_data = total_train.loc[:, y_column]
     X_data = dict_processed_data[y_column]
     for name, model in tqdm(models):
-        kfold = model_selection.KFold(n_splits=10, random_state=28, shuffle=True)
-        cv_results = model_selection.cross_val_score(model, X_data, y_data, cv=kfold, scoring=scoring)
+        kfold = KFold(n_splits=10, random_state=28, shuffle=True)
+        cv_results = cross_val_score(model, X_data, y_data, cv=kfold, scoring=scoring)
         results.loc[name, y_column] = np.mean(cv_results)
 
 # Plot imputation performance
@@ -311,11 +316,65 @@ sns.heatmap(data=results.astype(float), annot=True, ax=axs, fmt='.4g')
 path = rf'{GRAPH_PATH}/model_performance.png'
 fig.savefig(path, bbox_inches='tight')
 
-# %% Hpyer-Parameter Tuning for Final Models
+# %% Feature Selection
 
-"""Now it is time to train hyper-parameterized models for """
+"""From the """
 
+# Feature Importance
+gbm_clf = GradientBoostingClassifier()
+dict_relevant_data = {}
+THRESHOLD_IMPORTANCE = 1 / 100
 
+fig, axs = plt.subplots(figsize=(20, 10), ncols=num_target_columns)
+axs = axs.ravel()
+for i, y_column in enumerate(target_columns):
 
+    y_data = total_train.loc[:, y_column]
+    X_data = dict_processed_data[y_column]
+
+    clf = gbm_clf.fit(X_data, y_data)
+    feature_importance = clf.feature_importances_
+    df_feature_importance = pd.DataFrame(np.reshape(feature_importance, (-1, 1)),
+                                         index=X_data.columns, columns=['columns'])
+    df_above_one_percent = df_feature_importance.query('columns >= @THRESHOLD_IMPORTANCE')
+    sorted_features = df_above_one_percent.sort_values(by='columns', ascending=False)
+    dict_relevant_data[y_column] = dict_processed_data[y_column].loc[:, list(sorted_features.index)]
+
+    sorted_features.plot.bar(ax=axs[i])
+path = rf'{GRAPH_PATH}/feature_importance.png'
+fig.savefig(path, bbox_inches='tight')
+
+# %% Hyper-Parameter Tuning
+
+"""Now we tune the hyper-parameter of the Gradient Boosting. Furthermore, we apply a SMOTE algorithm to up-sample
+the minority class. As we found out in the beginning, the h1n1 vaccine is quite imbalanced (~20% of majority class).
+We try out three different levels for the SMOTE algorithm, either the status quo, midway sampling or exactly the same
+amount.
+
+"""
+
+gb_grid_params = {
+    'gradientboostingclassifier__learning_rate': [1/pow(10, x) for x in range(1, 3)],
+    'gradientboostingclassifier__max_depth': np.linspace(3, 30, num=3, dtype=int),
+    'gradientboostingclassifier__min_samples_leaf': np.linspace(1, 30, num=3, dtype=int),
+    'gradientboostingclassifier__n_estimators': [1_000],
+}
+
+over_sampler = imblearn.over_sampling.SMOTE(random_state=28)
+gb_model = GradientBoostingClassifier(random_state=28)
+gb_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
+
+for y_column in target_columns:
+
+    # Get the SMOTE params
+    num_target_values = total_train.loc[:, y_column].value_counts()
+    current_balance = math.ceil(min(num_target_values) / max(num_target_values) * 100) / 100
+    smote_grid_params = {'smote__sampling_strategy': np.linspace(current_balance, 1, num=3)}
+
+    # Initialize the GridSearch
+    grid_params = {**gb_grid_params, **smote_grid_params}
+    gb_gs_clf = GridSearchCV(gb_pipeline, grid_params, n_jobs=-1, scoring='roc_auc')
+
+    # Train the model
 
 

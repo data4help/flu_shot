@@ -9,6 +9,7 @@ seaborn = "*"
 tqdm = "*"
 sklearn = "*"
 category-encoders = "*"
+imbalanced-learn = "*"
 
 [dev-packages]
 
