@@ -20,6 +20,7 @@ from category_encoders import TargetEncoder, OneHotEncoder
 from sklearn.preprocessing import MinMaxScaler
 
 # Pipeline
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import make_pipeline
 
@@ -63,8 +64,6 @@ train_labels = pd.read_csv(rf'{RAW_PATH}/training_labels.csv')
 test_features = pd.read_csv(rf'{RAW_PATH}/test_features.csv')
 total_train = pd.merge(train_features, train_labels, on='respondent_id')
 total_train.drop(columns=['respondent_id'], inplace=True)
-
-total_train = total_train.loc[:1000, :]
 
 # %% Exploration of Dependent Variable
 
@@ -132,10 +131,21 @@ between participants, we reduce the possible answers from five to three. This po
 It is not possible to treat them as a numeric variable either given that the answer choice 'Don't Know' does not lay
 in the middle between low and high"""
 
-new_opinion_cat = {1: 'Low', 2: 'Low', 3: 'No Idea', 4: 'High', 5: 'High'}
-opinion_variables = [x for x in total_train.columns if x.startswith('opinion')]
-for var in opinion_variables:
-    total_train.loc[:, var] = total_train.loc[:, var].map(new_opinion_cat)
+
+class OpinionTransformer(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+
+    def fit(self, X_data, y_data=None):
+        return self
+
+    def transform(self, X_data, y_data=None):
+        new_opinion_cat = {1: 'Low', 2: 'Low', 3: 'No Idea', 4: 'High', 5: 'High'}
+        opinion_variables = [x for x in X_data.columns if x.startswith('opinion')]
+        for var in opinion_variables:
+            X_data.loc[:, var] = X_data.loc[:, var].map(new_opinion_cat)
+        return X_data
+
 
 # %% Feature Engineering - Creation of scoring variables
 
@@ -155,47 +165,36 @@ careful_behavior = [
     'behavioral_touch_face',
 ]
 
+# Risk Group
+risk_group_columns = [
+    'chronic_med_condition',
+    'health_worker',
+]
+
 df_careful_corr = total_train.loc[:, careful_behavior].corr()
 fig, axs = plt.subplots(figsize=(10, 10))
 sns.heatmap(df_careful_corr, ax=axs)
 path = rf'{GRAPH_PATH}\careful_correlation_matrix.png'
 fig.savefig(path, bbox_inches='tight')
 
-total_train.loc[:, 'careful_score'] = total_train.loc[:, careful_behavior].sum(axis=1)
 
-# Risk Group
-risk_group_columns = [
-    'chronic_med_condition',
-    'health_worker',
-]
-old_series = total_train.loc[:, 'age_group'] == '65+ Years'
-total_train.loc[:, 'risk_score'] = total_train.loc[:, risk_group_columns].sum(axis=1) + old_series
+class ScoringVariableCreation(BaseEstimator, TransformerMixin):
 
-# %% Feature Engineering - What kind of city/ profession/ industry do you live/work in
+    def __init__(self, careful_columns, risk_group_columns):
+        self.careful_columns = careful_columns
+        self.risk_group_columns = risk_group_columns
 
-"""What we would like to indicate now are more characteristics about every city/occupation/industry individually.
-Particularly we would like to find out what the average income/ age / etc. is for all aforementioned grouping variables.
-For that we create plots as well as ranking variables."""
+    def fit(self, X_data, y_data=None):
+        return self
 
-groupby_variables = [
-    'employment_industry',
-    'employment_occupation',
-    'hhs_geo_region'
-]
+    def transform(self, X_data, y_data=None):
+        # Careful score
+        X_data.loc[:, 'careful_score'] = X_data.loc[:, self.careful_columns].sum(axis=1)
 
-sorting_variables = [
-    'h1n1_concern',
-    'careful_score',
-    'income_poverty',
-    'careful_score',
-    'income_poverty',
-]
-
-for grouping in tqdm(groupby_variables):
-    for secondary in sorting_variables:
-        new_var_name = f'{grouping}_{secondary}_ranking'
-        total_train.loc[:, new_var_name] = self_func.create_ranking(grouping, secondary, total_train)
-        self_plot.grouping_insights(grouping, secondary, total_train)
+        # Risk group score
+        bool_old_people = X_data.loc[:, 'age_group'] == '65+ Years'
+        X_data.loc[:, 'risk_group_score'] = X_data.loc[:, self.risk_group_columns].sum(axis=1) + bool_old_people
+        return X_data
 
 # %% Pre-Processing Pipeline
 
@@ -204,6 +203,26 @@ median and mean. Finally we try a range of classifiers. For doing that we have t
 that we separate all features into two buckets. One bucket for all features with fewer or equal to five categories,
 the other bucket for the rest. The latter bucket will be target encoded, the former bucket transformed to dummies.
 """
+
+
+class TransformerPipeline(BaseEstimator, TransformerMixin):
+
+    def __init__(self, cat_threshold):
+        self.cat_threshold = cat_threshold
+
+    def fewer_than_cutoff(column_name, data, n):
+        series = data.loc[:, column_name]
+        num_categories = len(series.value_counts())
+        return num_categories <= n
+
+    def fit(self, X_data, y_data=None):
+        self.less_than_six = [x for x in feature_columns if self.fewer_than_cutoff(x, X_data, self.cat_threshold)]
+        self.more_than_five = list(set(X_data.columns) - set(features_fewer_than_six))
+        return self
+
+    def transform(self, X_data, y_data):
+
+
 
 # Column Separator
 NUM_CAT_THRESHOLD = 5
@@ -427,19 +446,23 @@ for y_column in tqdm(target_columns):
 
 # Find the best parameters
 for y_column in target_columns:
+
+    # Get the data
+    y_data = total_train.loc[:, y_column]
+    X_data = dict_relevant_data[y_column]
+
     df_params = dict_gridsearch_results[y_column]
     best_params = df_params.sort_values(by='rank_test_score').loc[0, 'params']
 
-gb_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
-gb_pipeline.set_params(**best_params)
+    gb_smote_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
 
-final_pipeline = make_pipeline(
-    transforming_pipeline,
-    KNNImputer(n_neighbors=100),
-    gb_pipeline.set_params(**best_params)
-)
+    final_pipeline = make_pipeline(
+        transforming_pipeline,
+        KNNImputer(n_neighbors=100),
+        gb_smote_pipeline
+    )
 
-final_pipeline.fit(X_data)
+    final_pipeline.fit(X_data, y_data)
 
 
 
