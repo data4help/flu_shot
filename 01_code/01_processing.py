@@ -195,7 +195,8 @@ class KNNImputation(TransformerMixin):
         self.plot_imputing_score(df_imputed, target_name)
         df_imputed.loc[:, 'score'] = df_imputed.loc[:, 'score'].astype(float)
         best_n_neighbors = df_imputed.groupby('neighbors')['score'].mean().idxmax()
-        self.best_imputer = KNNImputer(n_neighbors=best_n_neighbors).fit(X_data)
+        self.best_imputer = KNNImputer(n_neighbors=best_n_neighbors)
+        self.best_imputer.fit(X_data)
         return self
 
     def transform(self, X_data, y_data=None):
