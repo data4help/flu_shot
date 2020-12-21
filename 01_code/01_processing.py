@@ -7,6 +7,7 @@
 import pandas as pd
 from tqdm import tqdm
 import pickle
+import copy
 
 # Plotting
 import matplotlib.pyplot as plt
@@ -62,12 +63,13 @@ train_labels = train_labels.loc[:TEST_SAMPLE_LENGTH, :]
 # %% Feature Engineering - Subjective Answers
 
 
-class OpinionTransformer(TransformerMixin):
+class OpinionTransformer(BaseEstimator, TransformerMixin):
     """The dataset contains several variables which has subjective answering - for example how would you rate the risk
     of getting the seasonal flu. Given that the differentation between 'Very Low' and 'Somewhat Low' is not comparable
     between participants, we reduce the possible answers from five to three. This potentially reduces confusion.
     It is not possible to treat them as a numeric variable either given that the answer choice 'Don't Know' does not lay
     in the middle between low and high"""
+
     def __init__(self):
         pass
 
@@ -85,7 +87,7 @@ class OpinionTransformer(TransformerMixin):
 # %% Feature Engineering - Creation of scoring variables
 
 
-class ScoringVariableCreation(TransformerMixin):
+class ScoringVariableCreation(BaseEstimator, TransformerMixin):
     """In order for the model to better pick up information from multiple columns, we can give the model the information
     in a better to understand format. For that we create a score for being careful, and for being in the risk group.
     This score is nothing other than a sum of binary variables which indicate carefulness/ or being part of a risk
@@ -111,8 +113,9 @@ class ScoringVariableCreation(TransformerMixin):
 # %% Pre-Processing Pipeline
 
 
-class TransformerPipeline(TransformerMixin):
+class TransformerPipeline(BaseEstimator, TransformerMixin):
     """"""
+
     def __init__(self, cat_threshold, feature_columns):
         self.cat_threshold = cat_threshold
         self.feature_columns = feature_columns
@@ -135,19 +138,18 @@ class TransformerPipeline(TransformerMixin):
         dummy_transformer = make_pipeline(
             OneHotEncoder(handle_missing='return_nan')
         )
-        self.transforming_pipeline = ColumnTransformer(
+        transforming_pipeline = ColumnTransformer(
             transformers=[
                 ('TargetEncoding', target_encoding_transformer, columns_more_than_five),
                 ('Dummy', dummy_transformer, columns_less_than_six)
             ]
         )
-
-        self.fitted_transformer = self.transforming_pipeline.fit(X_data, y_data)
+        self.transformer_instance = transforming_pipeline.fit(X_data, y_data)
         return self
 
     def transform(self, X_data, y_data=None):
-        processed_data = self.fitted_transformer.transform(X_data)
-        column_names = help_proc.get_feature_names(self.transforming_pipeline)
+        column_names = help_proc.get_feature_names(self.transformer_instance)
+        processed_data = self.transformer_instance.transform(X_data)
         df_processed_data = pd.DataFrame(processed_data, columns=column_names)
         return df_processed_data
 
@@ -155,11 +157,11 @@ class TransformerPipeline(TransformerMixin):
 # %% Imputation
 
 
-class KNNImputation(TransformerMixin):
+class KNNImputation(BaseEstimator, TransformerMixin):
     """"""
 
-    def __init__(self, n_neighbors, classification_model):
-        self.n_neighbors_list = n_neighbors
+    def __init__(self, n_neighbors_list, classification_model):
+        self.n_neighbors_list = n_neighbors_list
         self.classification_model = classification_model
         self.N_SPLITS = 10
 
@@ -195,15 +197,15 @@ class KNNImputation(TransformerMixin):
         self.plot_imputing_score(df_imputed, target_name)
         df_imputed.loc[:, 'score'] = df_imputed.loc[:, 'score'].astype(float)
         best_n_neighbors = df_imputed.groupby('neighbors')['score'].mean().idxmax()
-        self.best_imputer = KNNImputer(n_neighbors=best_n_neighbors)
-        self.best_imputer.fit(X_data)
+        knn_imputer = KNNImputer(n_neighbors=best_n_neighbors, copy=True)
+        self.best_imputer = knn_imputer.fit(X_data)
         return self
 
     def transform(self, X_data, y_data=None):
 
         columns = X_data.columns
         imputed_X_data = self.best_imputer.transform(X_data)
-
+        a = X_data.values
         df_imputed = pd.DataFrame(imputed_X_data, columns=columns)
         assert not df_imputed.isna().any().any(), 'Still Missing Data!'
         return df_imputed
@@ -212,7 +214,7 @@ class KNNImputation(TransformerMixin):
 # %% Clustering
 
 
-class CreateClusters(TransformerMixin):
+class CreateClusters(BaseEstimator, TransformerMixin):
     """"""
 
     def __init__(self):
@@ -256,7 +258,7 @@ risk_group_columns = ['chronic_med_condition', 'health_worker']
 
 # Imputation
 #list_n_neighbors = [10, 25, 50, 75, 100, 150, 200]
-list_n_neighbors = [2, 5]
+list_n_neighbors = [2]
 example_clf = LogisticRegression(max_iter=1_000)
 
 preprocessing_pipe = make_pipeline(
@@ -269,11 +271,13 @@ preprocessing_pipe = make_pipeline(
 
 for target in tqdm(target_columns):
     y_series = train_labels.loc[:, target]
-    preprocessing_pipe.fit(train_features, y_series)
+    train_features_copy = train_features.copy()
+    processor_instance = copy.deepcopy(preprocessing_pipe)
+    processor_instance.fit(train_features_copy, y_series)
 
     dict_processed_data = {
-        'test': preprocessing_pipe.transform(test_features),
-        'train': preprocessing_pipe.transform(train_features)
+        'test': processor_instance.transform(test_features),
+        'train': processor_instance.transform(train_features_copy)
     }
 
     file_name = rf'{DATA_PATH}/{target}_data_dict.pickle'
