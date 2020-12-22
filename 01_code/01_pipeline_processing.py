@@ -63,7 +63,7 @@ train_labels = train_labels.loc[:TEST_SAMPLE_LENGTH, :]
 # %% Feature Engineering - Subjective Answers
 
 
-class OpinionTransformer(BaseEstimator, TransformerMixin):
+class OpinionTransformer(TransformerMixin):
     """The dataset contains several variables which has subjective answering - for example how would you rate the risk
     of getting the seasonal flu. Given that the differentation between 'Very Low' and 'Somewhat Low' is not comparable
     between participants, we reduce the possible answers from five to three. This potentially reduces confusion.
@@ -87,7 +87,7 @@ class OpinionTransformer(BaseEstimator, TransformerMixin):
 # %% Feature Engineering - Creation of scoring variables
 
 
-class ScoringVariableCreation(BaseEstimator, TransformerMixin):
+class ScoringVariableCreation(TransformerMixin):
     """In order for the model to better pick up information from multiple columns, we can give the model the information
     in a better to understand format. For that we create a score for being careful, and for being in the risk group.
     This score is nothing other than a sum of binary variables which indicate carefulness/ or being part of a risk
@@ -113,7 +113,7 @@ class ScoringVariableCreation(BaseEstimator, TransformerMixin):
 # %% Pre-Processing Pipeline
 
 
-class TransformerPipeline(BaseEstimator, TransformerMixin):
+class TransformerPipeline(TransformerMixin):
     """"""
 
     def __init__(self, cat_threshold, feature_columns):
@@ -157,7 +157,7 @@ class TransformerPipeline(BaseEstimator, TransformerMixin):
 # %% Imputation
 
 
-class KNNImputation(BaseEstimator, TransformerMixin):
+class KNNImputation(TransformerMixin):
     """"""
 
     def __init__(self, n_neighbors_list, classification_model):
@@ -214,7 +214,7 @@ class KNNImputation(BaseEstimator, TransformerMixin):
 # %% Clustering
 
 
-class CreateClusters(BaseEstimator, TransformerMixin):
+class CreateClusters(TransformerMixin):
     """"""
 
     def __init__(self):
