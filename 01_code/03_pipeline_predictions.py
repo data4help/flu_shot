@@ -97,19 +97,34 @@ class FinalPrediction(TransformerMixin):
 
     def __init__(self, model_parameters):
         self.model_parameters = model_parameters
+        self.BEST_PARAMETERS_FOR_SHOW = 100
+
+    def grid_params_importance(self, df_grid_results):
+        df_sorted_grid_results = df_grid_results.sort_values(by='rank_test_score')
+        df_top_parameters = df_sorted_grid_results.query('rank_test_score <= @self.BEST_PARAMETERS_FOR_SHOW')
+        list_of_best_params = list(df_top_parameters.loc[:, 'params'])
+        series_top_parameters = pd.DataFrame.from_dict(list_of_best_params)
+        reshaped_best_params =
 
     def fit(self, X_data, y_data=None):
 
-        # Adding Balancement
+        # Adding Balancement Parameters
         num_target_values = y_data.value_counts()
         current_balance = math.ceil(min(num_target_values) / max(num_target_values) * 100) / 100
         smote_grid_params = {'smote__sampling_strategy': np.linspace(current_balance, 1, num=3)}
         grid_params = {**self.model_parameters, **smote_grid_params}
 
+        # Creating the final pipeline
         over_sampler = imblearn.over_sampling.SMOTE(random_state=28)
         gb_model = GradientBoostingClassifier(random_state=28)
         gb_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
-        gb_gs_clf = GridSearchCV(gb_model, grid_params, n_jobs=-1, cv=5, scoring='roc_auc')
+        gb_gs_clf = GridSearchCV(gb_pipeline, grid_params, n_jobs=-1, cv=5, scoring='roc_auc')
+
+        # Train the model
+        gb_gs_clf.fit(X_data, y_data)
+        df_grid_results = pd.DataFrame.from_dict(gb_gs_clf.cv_results_)
+        self.grid_params_importance(df_grid_results)
+
 
     def transform(self, X_data, y_data=None):
         pass
@@ -128,9 +143,6 @@ gb_grid_params = {
 
 
 
-over_sampler = imblearn.over_sampling.SMOTE(random_state=28)
-gb_model = GradientBoostingClassifier(random_state=28)
-gb_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
 
 
 
