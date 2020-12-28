@@ -12,13 +12,15 @@ import copy
 from tqdm import tqdm
 import pickle
 import math
+from datetime import date
 
 # Plotting
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Pipelines
 from sklearn.pipeline import make_pipeline
-from sklearn.base import TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin
 
 # Feature Importance
 from sklearn.ensemble import GradientBoostingClassifier
@@ -49,6 +51,7 @@ for target, file in zip(saved_files, target_columns):
     data_dict[file] = pickle.load(infile)
     infile.close()
 
+test_features = pd.read_csv(rf'{RAW_PATH}/test_features.csv')
 train_labels = pd.read_csv(rf'{RAW_PATH}/training_labels.csv')
 train_labels = train_labels.loc[:1_000, :]
 
@@ -61,12 +64,15 @@ class FeatureSelection(TransformerMixin):
         self.cutoff_threshold = cutoff_threshold
 
     def plotting_feature_importance(self, df_sorted_features, target_name):
+        """"""
+
         fig, axs = plt.subplots(figsize=(10, 10))
         df_sorted_features.plot.bar(ax=axs)
-        path = rf'{OUTPUT_PATH}/feature_importance_{target_name}.png'
+        path = rf'{OUTPUT_PATH}/00_graphs/feature_importance_{target_name}.png'
         fig.savefig(path, bbox_inches='tight')
 
     def fit(self, X_data, y_data=None):
+        """"""
 
         # Feature Importance
         target_name = y_data.name
@@ -86,6 +92,8 @@ class FeatureSelection(TransformerMixin):
         return self
 
     def transform(self, X_data, y_data=None):
+        """"""
+
         df_relevant_columns = X_data.loc[:, self.relevant_columns]
         return df_relevant_columns
 
@@ -93,22 +101,52 @@ class FeatureSelection(TransformerMixin):
 # %% Hyper-Parameter Tuning
 
 
-class FinalPrediction(TransformerMixin):
+class FinalPrediction(BaseEstimator, TransformerMixin):
 
     def __init__(self, model_parameters):
         self.model_parameters = model_parameters
         self.BEST_PARAMETERS_FOR_SHOW = 100
 
-    def grid_params_importance(self, df_grid_results):
+    def plot_grid_params_importance(self, df_grid_results, target_name):
+        """"""
+
         df_sorted_grid_results = df_grid_results.sort_values(by='rank_test_score')
         df_top_parameters = df_sorted_grid_results.query('rank_test_score <= @self.BEST_PARAMETERS_FOR_SHOW')
         list_of_best_params = list(df_top_parameters.loc[:, 'params'])
         series_top_parameters = pd.DataFrame.from_dict(list_of_best_params)
-        reshaped_best_params =
+
+        ncols = 2
+        nrows = math.ceil(series_top_parameters.shape[1] / ncols)
+        fig, axs = plt.subplots(ncols=ncols, nrows=nrows, figsize=(nrows*10, ncols*10))
+        axs = axs.ravel()
+        for i, col_name in enumerate(series_top_parameters):
+            series = series_top_parameters.loc[:, col_name]
+            sns.countplot(x=series, ax=axs[i])
+        path = rf'{OUTPUT_PATH}/00_graphs/best_hyper_{target_name}.png'
+        fig.savefig(path, bbox_inches='tight')
+
+    def obtain_best_model(self, X_data, y_data, df_grid_results, gb_pipeline):
+        """"""
+
+        best_pipe = copy.deepcopy(gb_pipeline)
+
+        # Finding best params
+        df_best_params = df_grid_results.query('rank_test_score==1')
+        if len(df_best_params) > 1:
+            df_best_params = df_best_params.sort_values(by='mean_fit_time').iloc[[0], :]
+        dict_best_params = df_best_params.loc[:, 'params'].values[0]
+        best_pipe.set_params(**dict_best_params)
+        best_pipe.fit(X_data, y_data)
+        return best_pipe
+
+    def best_model_performance(self):
+        # TODO: evaluation of best classifer, confusion matrix and roc curve would be appropriate here
+        pass
 
     def fit(self, X_data, y_data=None):
+        """"""
 
-        # Adding Balancement Parameters
+        # Adding SMOTE Parameters
         num_target_values = y_data.value_counts()
         current_balance = math.ceil(min(num_target_values) / max(num_target_values) * 100) / 100
         smote_grid_params = {'smote__sampling_strategy': np.linspace(current_balance, 1, num=3)}
@@ -120,14 +158,21 @@ class FinalPrediction(TransformerMixin):
         gb_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
         gb_gs_clf = GridSearchCV(gb_pipeline, grid_params, n_jobs=-1, cv=5, scoring='roc_auc')
 
-        # Train the model
+        # Plot the results of the tuning
         gb_gs_clf.fit(X_data, y_data)
         df_grid_results = pd.DataFrame.from_dict(gb_gs_clf.cv_results_)
-        self.grid_params_importance(df_grid_results)
+        target_name = y_data.name
+        self.plot_grid_params_importance(df_grid_results, target_name)
 
+        # Obtain the best pipeline
+        self.best_model = self.obtain_best_model(X_data, y_data, df_grid_results, gb_pipeline)
+        return self
 
-    def transform(self, X_data, y_data=None):
-        pass
+    def predict_proba(self, X_data, y_data=None):
+        """"""
+
+        predictions = self.best_model.predict_proba(X_data)
+        return predictions
 
 
 # %%
@@ -144,8 +189,7 @@ gb_grid_params = {
 
 
 
-
-
+df_results = pd.DataFrame(columns=target_columns, index=test_features.index)
 predicting_pipe = make_pipeline(
     FeatureSelection(CUTOFF_THRESHOLD),
     FinalPrediction(gb_grid_params)
@@ -153,62 +197,13 @@ predicting_pipe = make_pipeline(
 
 for target in tqdm(target_columns):
     y_series = train_labels.loc[:, target]
-    train_features_copy = data_dict[target]['train']
+    train_features_copy = data_dict[target]['train'].copy()
+    test_features_copy = data_dict[target]['test'].copy()
 
-    predicting_instance = copy.deepcopy(predicting_pipe)
-    predicting_instance.fit(train_features_copy, y_series)
-    predicting_instance.transform(train_features_copy)
-
-
-# # %% Hyper-Parameter Tuning
-#
-# """Now we tune the hyper-parameter of the Gradient Boosting. Furthermore, we apply a SMOTE algorithm to up-sample
-# the minority class. As we found out in the beginning, the h1n1 vaccine is quite imbalanced (~20% of majority class).
-# We try out three different levels for the SMOTE algorithm, either the status quo, midway sampling or exactly the same
-# amount.
-# """
-#
-# dict_gridsearch_results = {}
-# for y_column in tqdm(target_columns):
-#     # Get the SMOTE params
-#     num_target_values = total_train.loc[:, y_column].value_counts()
-#     current_balance = math.ceil(min(num_target_values) / max(num_target_values) * 100) / 100
-#     smote_grid_params = {'smote__sampling_strategy': np.linspace(current_balance, 1, num=3)}
-#
-#     # Initialize the GridSearch
-#     grid_params = {**gb_grid_params, **smote_grid_params}
-#     gb_gs_clf = GridSearchCV(gb_pipeline, grid_params, n_jobs=-1, cv=5, scoring='roc_auc')
-#
-#     # Get the data
-#     y_data = total_train.loc[:, y_column]
-#     X_data = dict_relevant_data[y_column]
-#
-#     # Train the model
-#     gb_gs_clf.fit(X_data, y_data)
-#     dict_gridsearch_results[y_column] = pd.DataFrame.from_dict(gb_gs_clf.cv_results_)
-#
-# # %% Actual Prediction
-#
-# # Find the best parameters
-# for y_column in target_columns:
-#     # Get the data
-#     y_data = total_train.loc[:, y_column]
-#     X_data = dict_relevant_data[y_column]
-#
-#     df_params = dict_gridsearch_results[y_column]
-#     best_params = df_params.sort_values(by='rank_test_score').loc[0, 'params']
-#
-#     gb_smote_pipeline = imblearn.pipeline.make_pipeline(over_sampler, gb_model)
-#
-#     final_pipeline = make_pipeline(
-#         transforming_pipeline,
-#         KNNImputer(n_neighbors=100),
-#         gb_smote_pipeline
-#     )
-#
-#     final_pipeline.fit(X_data, y_data)
-#
-#
-#
+    predicting_pipe.fit(train_features_copy, y_series)
+    df_results.loc[:, target] = predicting_pipe.predict_proba(test_features_copy)
 
 
+date_string = date.today().strftime("%m_%d_%y")
+file_name = f'test_{date_string}'
+df_results.to_csv(rf'{OUTPUT_PATH}/01_predictions/{file_name}.csv', index=True)
