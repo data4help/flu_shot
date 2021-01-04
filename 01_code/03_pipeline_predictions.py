@@ -27,6 +27,7 @@ from sklearn.ensemble import GradientBoostingClassifier
 
 # Predictions
 from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import plot_confusion_matrix
 
 # Upsampling
 import imblearn
@@ -64,7 +65,7 @@ class FeatureSelection(TransformerMixin):
         self.cutoff_threshold = cutoff_threshold
 
     def plotting_feature_importance(self, df_sorted_features, target_name):
-        """"""
+        """This method plots the importance of all features"""
 
         fig, axs = plt.subplots(figsize=(10, 10))
         df_sorted_features.plot.bar(ax=axs)
@@ -72,7 +73,7 @@ class FeatureSelection(TransformerMixin):
         fig.savefig(path, bbox_inches='tight')
 
     def fit(self, X_data, y_data=None):
-        """"""
+        """We fit a basic Gradient Boosting and extract the feature importance"""
 
         # Feature Importance
         target_name = y_data.name
@@ -92,7 +93,7 @@ class FeatureSelection(TransformerMixin):
         return self
 
     def transform(self, X_data, y_data=None):
-        """"""
+        """Here we simply use the columns which are important"""
 
         df_relevant_columns = X_data.loc[:, self.relevant_columns]
         return df_relevant_columns
@@ -108,7 +109,7 @@ class FinalPrediction(BaseEstimator, TransformerMixin):
         self.BEST_PARAMETERS_FOR_SHOW = 100
 
     def plot_grid_params_importance(self, df_grid_results, target_name):
-        """"""
+        """This method plots out of the top 100 best models how often did which hyper-parameter the best."""
 
         df_sorted_grid_results = df_grid_results.sort_values(by='rank_test_score')
         df_top_parameters = df_sorted_grid_results.query('rank_test_score <= @self.BEST_PARAMETERS_FOR_SHOW')
@@ -126,7 +127,7 @@ class FinalPrediction(BaseEstimator, TransformerMixin):
         fig.savefig(path, bbox_inches='tight')
 
     def obtain_best_model(self, X_data, y_data, df_grid_results, gb_pipeline):
-        """"""
+        """This method extracts the best model for all hyper-parameters"""
 
         best_pipe = copy.deepcopy(gb_pipeline)
 
@@ -139,12 +140,18 @@ class FinalPrediction(BaseEstimator, TransformerMixin):
         best_pipe.fit(X_data, y_data)
         return best_pipe
 
-    def best_model_performance(self):
-        # TODO: evaluation of best classifer, confusion matrix and roc curve would be appropriate here
-        pass
+    def best_model_performance(self, best_model, X_data, y_data, target_name):
+        """This method plots the confusion matrix of the best classifier"""
+
+        # TODO: evaluation of best classifier, confusion matrix and roc curve would be appropriate here
+        fig, axs = plt.subplots(figsize=(10, 10))
+        plot_confusion_matrix(best_model, X_data, y_data, ax=axs)
+        path = rf'{OUTPUT_PATH}/00_graphs/model_performance_{target_name}.png'
+        fig.savefig(path, bbox_inches='tight')
 
     def fit(self, X_data, y_data=None):
-        """"""
+        """Here we find the best model by implementing a pipeline and gridsearching it. It is important to note that
+        we use imblearn pipelines given that we also specify a SMOTE parameter"""
 
         # Adding SMOTE Parameters
         num_target_values = y_data.value_counts()
@@ -166,16 +173,20 @@ class FinalPrediction(BaseEstimator, TransformerMixin):
 
         # Obtain the best pipeline
         self.best_model = self.obtain_best_model(X_data, y_data, df_grid_results, gb_pipeline)
+        self.best_model_performance(self.best_model, X_data, y_data, target_name)
         return self
 
     def predict_proba(self, X_data, y_data=None):
-        """"""
+        """This last method is for predicting the probabilities that an observation is taking the vaccine"""
 
         predictions = self.best_model.predict_proba(X_data)
-        return predictions
+        prediction_to_get_vaccine = predictions[:, 1]
+        return prediction_to_get_vaccine
 
+# %% Predicting
 
-# %%
+"""After specifying all classes above, we now create the final pipeline and set all parameters needed for the
+classes"""
 
 CUTOFF_THRESHOLD = 1 / 100
 
@@ -185,9 +196,6 @@ gb_grid_params = {
     'gradientboostingclassifier__min_samples_leaf': np.linspace(1, 30, num=3, dtype=int),
     'gradientboostingclassifier__n_estimators': [5],
 }
-
-
-
 
 df_results = pd.DataFrame(columns=target_columns, index=test_features.index)
 predicting_pipe = make_pipeline(
@@ -203,7 +211,6 @@ for target in tqdm(target_columns):
     predicting_pipe.fit(train_features_copy, y_series)
     df_results.loc[:, target] = predicting_pipe.predict_proba(test_features_copy)
 
-
 date_string = date.today().strftime("%m_%d_%y")
 file_name = f'test_{date_string}'
-df_results.to_csv(rf'{OUTPUT_PATH}/01_predictions/{file_name}.csv', index=True)
+df_results.to_csv(rf'{OUTPUT_PATH}/01_predictions/{file_name}.csv')
